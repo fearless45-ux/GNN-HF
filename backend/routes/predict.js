@@ -33,17 +33,29 @@ router.post('/', upload.any(), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Uploaded file must be an image' });
     }
     const filePath = file.path;
-    // resolve script path relative to this route file (reliable across workdirs)
-    let script = path.resolve(__dirname, '..', 'ml', 'predict_real.py');
-    if (!fs.existsSync(script)) {
-      // fallback to project-root ml folder (older layout)
-      script = path.resolve(process.cwd(), 'ml', 'predict_real.py');
+    // Resolve script path by trying a list of candidate locations/names so redeploys
+    // that rename files still work. Prefer scripts next to this route file.
+    const candidates = [
+      path.resolve(__dirname, '..', 'ml', 'predict_real.py'),
+      path.resolve(__dirname, '..', 'ml', 'predict_ecg.py'),
+      path.resolve(process.cwd(), 'ml', 'predict_real.py'),
+      path.resolve(process.cwd(), 'ml', 'predict_ecg.py'),
+      path.resolve(process.cwd(), 'backend', 'ml', 'predict_real.py'),
+      path.resolve(process.cwd(), 'backend', 'ml', 'predict_ecg.py')
+    ];
+
+    let script = null;
+    const tried = [];
+    for (const c of candidates) {
+      tried.push(c);
+      if (fs.existsSync(c)) { script = c; break; }
     }
 
-    if (!fs.existsSync(script)) {
-      console.error('Predict script not found at', script);
+    if (!script) {
+      console.error('Predict script not found. Tried paths:', tried);
       return res.status(500).json({ success: false, message: 'Prediction script not found on server' });
     }
+
     console.log('Using Python script:', script);
 
     const result = await runPythonScript(script, [filePath], { timeoutMS: 30000 }); // allow up to 30s
@@ -81,3 +93,21 @@ router.post('/', upload.any(), async (req, res) => {
 });
 
 export default router;
+
+// =========================
+// Debug endpoint: which prediction script is available?
+// =========================
+router.get('/script-check', (req, res) => {
+  const candidates = [
+    path.resolve(__dirname, '..', 'ml', 'predict_real.py'),
+    path.resolve(__dirname, '..', 'ml', 'predict_ecg.py'),
+    path.resolve(process.cwd(), 'ml', 'predict_real.py'),
+    path.resolve(process.cwd(), 'ml', 'predict_ecg.py'),
+    path.resolve(process.cwd(), 'backend', 'ml', 'predict_real.py'),
+    path.resolve(process.cwd(), 'backend', 'ml', 'predict_ecg.py')
+  ];
+
+  const found = candidates.find((c) => fs.existsSync(c));
+  if (found) return res.json({ available: true, script: path.basename(found) });
+  return res.json({ available: false, tried: candidates.map(p => path.basename(p)) });
+});
