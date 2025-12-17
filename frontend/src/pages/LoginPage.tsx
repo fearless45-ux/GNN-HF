@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ export default function LoginPage() {
   // --------------------------
   // UPDATED LOGIN FUNCTION WITH ERROR HANDLING
   // --------------------------
+  const navigate = useNavigate();
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -54,9 +55,9 @@ export default function LoginPage() {
 
       setSuccess("Login successful! Redirecting...");
 
-      // ⭐ REDIRECT TO DASHBOARD
+      // ⭐ REDIRECT TO DASHBOARD (client-side navigation avoids server 404 on SPA hosts)
       setTimeout(() => {
-        window.location.href = "/dashboard";
+        navigate("/dashboard");
       }, 1000);
 
     } catch (error) {

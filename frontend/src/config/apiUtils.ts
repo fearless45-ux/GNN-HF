@@ -59,5 +59,12 @@ export const logout = () => {
   localStorage.removeItem('token');
   localStorage.removeItem('email');
   localStorage.removeItem('patientId');
-  window.location.href = '/login';
+  // Perform client-side navigation to /login to avoid full page reloads on static hosts
+  try {
+    window.history.pushState({}, '', '/login');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  } catch (err) {
+    // Fallback to full navigation if history API is unavailable
+    window.location.href = '/login';
+  }
 };

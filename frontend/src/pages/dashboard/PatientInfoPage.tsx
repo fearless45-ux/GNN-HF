@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ArrowRight, User, Heart, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 interface PatientForm {
   patientName: string;
@@ -18,6 +19,7 @@ interface PatientForm {
 
 export default function PatientInfoPage() {
   const userEmail = localStorage.getItem("email") || "";
+  const navigate = useNavigate();
   const [formData, setFormData] = useState<PatientForm>({
     patientName: "",
     age: "",
@@ -83,9 +85,9 @@ export default function PatientInfoPage() {
 
       setSuccess("✅ Patient information saved successfully! Redirecting...");
 
-      // Redirect to dashboard
+      // Redirect to dashboard (client-side)
       setTimeout(() => {
-        window.location.href = "/dashboard";
+        navigate("/dashboard");
       }, 1500);
     } catch (error) {
       console.error("Patient info error:", error);

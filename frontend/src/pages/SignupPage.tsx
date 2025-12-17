@@ -67,9 +67,9 @@ export default function SignupPage() {
 
       setSuccess("Account created successfully! Redirecting...");
       
-      // ⭐ REDIRECT TO DASHBOARD
+      // ⭐ REDIRECT TO DASHBOARD (client-side)
       setTimeout(() => {
-        window.location.href = "/dashboard";
+        navigate("/dashboard");
       }, 1500);
 
     } catch (error) {
