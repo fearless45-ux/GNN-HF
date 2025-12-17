@@ -8,12 +8,10 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import logger from "./utils/logger.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
-// sanitizeInput removed per request
 
 // Routes
 import authRoutes from "./routes/auth.js";
-import predictRoutes from "./predict.js";
-import predictRouter from './routes/predict.js';
+import predictRoutes from "./routes/predict.js";
 import saveRoute from "./routes/save.js";
 import reportRoute from "./routes/reports.js";
 import updatePasswordRoute from "./routes/updatePassword.js";
@@ -30,173 +28,170 @@ const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// CORS Configuration with allowlist and fail-fast logging
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:8080')
-  .split(',')
-  .map(o => o.trim())
-  .filter(Boolean);
+// =========================================
+// SIMPLE GLOBAL CORS FOR RENDER DEPLOYMENT
+// =========================================
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
-if (allowedOrigins.length === 0) {
-  logger.warn("No FRONTEND_URL configured; defaulting to http://localhost:8080");
-  allowedOrigins.push('http://localhost:8080');
-}
+// =========================================
+// SECURITY MIDDLEWARE
+// =========================================
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: false,
+  })
+);
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // allow non-browser clients
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    logger.error(`CORS blocked origin: ${origin}. Allowed: ${allowedOrigins.join(', ')}`);
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-
-// Middleware
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false // Disable CSP for now to avoid blocking frontend resources
-}));
 app.use(requestIdMiddleware);
-app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Serve uploaded ECG images
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-// MongoDB
+// =========================================
+// DATABASE CONNECTION
+// =========================================
 mongoose
   .connect(process.env.MONGO_URI)
   .then(async () => {
     logger.info("MongoDB Connected");
 
-    // Add default users only once
+    // Insert default users if not present
     for (const u of users) {
       const exists = await User.findOne({ email: u.email });
       if (!exists) await User.create(u);
     }
   })
-  .catch((err) => logger.error("Mongo Connection Error", { error: err.message }));
+  .catch((err) =>
+    logger.error("Mongo Connection Error", { error: err.message })
+  );
 
-// Rate limiters
+// =========================================
+// RATE LIMITING
+// =========================================
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: { status: "error", message: "Too many authentication requests, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: {
+    status: "error",
+    message: "Too many authentication requests, please try again later",
+  },
 });
 
 const predictLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 30, // limit each IP to 30 predict requests per windowMs (ML is expensive)
-  message: { status: "error", message: "Too many prediction requests, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: {
+    status: "error",
+    message: "Too many prediction requests, try again later",
+  },
 });
 
-// Routes
+// =========================================
+// ROUTES
+// =========================================
 app.use("/api/auth", authLimiter, authRoutes);
+
+// IMPORTANT: only ONE predict route
 app.use("/api/predict", predictLimiter, predictRoutes);
+
 app.use("/api", saveRoute);
 app.use("/api", reportRoute);
 app.use("/api", updatePasswordRoute);
-app.use("/api", dashboardStatsRoute); // ⭐ NEW dashboard stats route
-app.use('/api/predict', predictRouter);
+app.use("/api", dashboardStatsRoute);
 
-// Default route
+// =========================================
+// DEFAULT ROUTES
+// =========================================
 app.get("/", (req, res) => {
   res.send("🔥 GNN-HF Backend API Running");
 });
 
-// Health check endpoint
 app.get("/health", (req, res) => {
   const healthcheck = {
     uptime: process.uptime(),
     message: "OK",
     timestamp: Date.now(),
     database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-    memory: process.memoryUsage(),
   };
-  
-  try {
-    res.status(200).json(healthcheck);
-  } catch (error) {
-    healthcheck.message = error;
-    res.status(503).json(healthcheck);
-  }
+  res.status(200).json(healthcheck);
 });
 
-// 404 handler
+// =========================================
+// 404 HANDLER
+// =========================================
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: "Route not found"
+    message: "Route not found",
   });
 });
 
-// Global error handler
+// =========================================
+// GLOBAL ERROR HANDLER
+// =========================================
 app.use((err, req, res, next) => {
-  const log = req.log || logger;
-  log.error("Global error handler", { error: err.message, stack: err.stack });
-  
-  // Multer file size error
-  if (err.code === 'LIMIT_FILE_SIZE') {
+  logger.error("Global error", { error: err.message, stack: err.stack });
+
+  if (err.code === "LIMIT_FILE_SIZE") {
     return res.status(400).json({
       success: false,
-      message: "File too large. Maximum size is 10MB."
+      message: "File too large. Max size is 10MB.",
     });
   }
-  
-  // Multer file type error
-  if (err.message && err.message.includes('Only image files')) {
-    return res.status(400).json({
-      success: false,
-      message: err.message
-    });
-  }
-  
+
   res.status(500).json({
     success: false,
-    message: "Internal server error"
+    message: "Internal server error",
   });
 });
 
-// Start server
+// =========================================
+// START SERVER
+// =========================================
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () =>
+  logger.info(`Server running on port ${PORT}`)
+);
 
-// Graceful shutdown handling
+// =========================================
+// GRACEFUL SHUTDOWN
+// =========================================
 const gracefulShutdown = (signal) => {
-  logger.info(`${signal} received, starting graceful shutdown`);
-  
+  logger.info(`${signal} received, shutting down...`);
+
   server.close(() => {
-    logger.info('HTTP server closed');
-    
+    logger.info("Server closed");
+
     mongoose.connection.close(false, () => {
-      logger.info('MongoDB connection closed');
+      logger.info("MongoDB connection closed");
       process.exit(0);
     });
   });
-  
-  // Force shutdown after 10 seconds
+
   setTimeout(() => {
-    logger.error('Forced shutdown after timeout');
+    logger.error("Forced shutdown due to timeout");
     process.exit(1);
   }, 10000);
 };
 
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-// Handle uncaught errors
-process.on('uncaughtException', (err) => {
-  logger.error('Uncaught Exception', { error: err.message, stack: err.stack });
-  gracefulShutdown('uncaughtException');
+process.on("unhandledRejection", (reason) => {
+  logger.error("Unhandled Rejection", { reason });
+  gracefulShutdown("unhandledRejection");
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection', { reason, promise });
-  gracefulShutdown('unhandledRejection');
+process.on("uncaughtException", (err) => {
+  logger.error("Uncaught Exception", { error: err.message });
+  gracefulShutdown("uncaughtException");
 });
