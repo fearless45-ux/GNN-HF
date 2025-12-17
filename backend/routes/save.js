@@ -8,20 +8,35 @@ import path from "path";
 const router = express.Router();
 
 // ===================================================================
-// ⭐ SAVE REPORT API (Now stores Base64 + ImagePath)
+// ⭐ SAVE REPORT API — FIXED FOR BOTH FRONTEND CASES
 // ===================================================================
 router.post("/save-report", authMiddleware, async (req, res) => {
   try {
-    const email = req.user.email; // Get from authenticated user
-    const {
-      imagePath,
-      predictedClass,
-      riskLevel,
-      riskScore,
-      confidence,
-      probabilities,
-      patientData, // New: patient data from upload form
-    } = req.body;
+    const email = req.user.email;
+
+    // Accept BOTH camelCase and snake_case
+    const imagePath = req.body.imagePath;
+
+    const predicted_class =
+      req.body.predicted_class || req.body.predictedClass;
+
+    const risk_level =
+      req.body.risk_level || req.body.riskLevel;
+
+    const risk_score =
+      req.body.risk_score || req.body.riskScore;
+
+    const confidence = req.body.confidence;
+    const probabilities = req.body.probabilities;
+    const patientData = req.body.patientData;
+
+    // 🔥 Validate
+    if (!patientData) {
+      return res.status(400).json({
+        status: "error",
+        message: "Patient data is required",
+      });
+    }
 
     if (!imagePath) {
       return res.status(400).json({
@@ -30,18 +45,10 @@ router.post("/save-report", authMiddleware, async (req, res) => {
       });
     }
 
-    if (!patientData) {
-      return res.status(400).json({
-        status: "error",
-        message: "Patient data is required",
-      });
-    }
-
-    // ===================================================================
-    // ⭐ GET USER'S DATA FROM DATABASE
-    // ===================================================================
+    // =======================
+    // Get user
+    // =======================
     const user = await User.findOne({ email }).lean();
-    
     if (!user) {
       return res.status(404).json({
         status: "error",
@@ -49,55 +56,51 @@ router.post("/save-report", authMiddleware, async (req, res) => {
       });
     }
 
-    if (!user.patientId) {
-      return res.status(400).json({
-        status: "error",
-        message: "User does not have a patient ID assigned",
-      });
-    }
-
-    // Extract patient info from the upload form data
-    const name = patientData.patientName || "Unknown";
-    const age = parseInt(patientData.age) || 0;
-    const gender = patientData.gender || "Not specified";
-    const symptoms = patientData.symptoms || "";
-    const medicalHistory = patientData.medicalHistory || "";
+    // =======================
+    // Extract Patient Info
+    // =======================
+    const name = patientData.patientName;
+    const age = parseInt(patientData.age);
+    const gender = patientData.gender;
+    const symptoms = patientData.symptoms;
+    const medicalHistory = patientData.medicalHistory;
 
     // ===================================================================
-    // ⭐ SAVE NEW REPORT
+    // ⭐ Convert image to base64
     // ===================================================================
-    // If imageBase64 not sent, try to derive it from imagePath (uploaded file)
     let imageBase64ToStore = req.body.imageBase64;
     if (!imageBase64ToStore && imagePath) {
       try {
         const diskPath = path.join(process.cwd(), imagePath.replace(/^\//, ""));
         if (fs.existsSync(diskPath)) {
           const buff = fs.readFileSync(diskPath);
-          const mime = "image/png"; // uploads are normalized to png/jpg - safe default
-          imageBase64ToStore = `data:${mime};base64,${buff.toString("base64")}`;
+          imageBase64ToStore = `data:image/png;base64,${buff.toString("base64")}`;
         }
       } catch (err) {
-        // Log and continue without blocking save
-        console.warn("Could not derive imageBase64 from imagePath:", err.message);
+        console.warn("⚠️ Could not derive imageBase64:", err.message);
       }
     }
 
+    // ===================================================================
+    // ⭐ Create report
+    // ===================================================================
     const report = await PatientReport.create({
       userEmail: email,
-      patientId: user.patientId, // Use user's unique patient ID
+      patientId: user.patientId,
       name,
       age,
       gender,
       symptoms,
       medicalHistory,
-      
-      // ⭐ BOTH STORED
+
+      // Store both
       imagePath,
       imageBase64: imageBase64ToStore,
 
-      predictedClass,
-      riskLevel,
-      riskScore,
+      // Final normalized fields
+      predictedClass: predicted_class,
+      riskLevel: risk_level,
+      riskScore: risk_score,
       confidence,
       probabilities,
     });
@@ -105,10 +108,8 @@ router.post("/save-report", authMiddleware, async (req, res) => {
     return res.json({
       status: "success",
       message: "Report saved successfully",
-      patientId: user.patientId,
       report,
     });
-
   } catch (error) {
     console.error("❌ SAVE REPORT ERROR:", error);
     return res.status(500).json({
