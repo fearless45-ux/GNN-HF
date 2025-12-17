@@ -58,7 +58,9 @@ router.post('/', upload.any(), async (req, res) => {
 
     console.log('Using Python script:', script);
 
-    const result = await runPythonScript(script, [filePath], { timeoutMS: 30000 }); // allow up to 30s
+    // Allow more time for initial model loading on cold starts (models are loaded at import time)
+    // Increase to 120s to accommodate slow disk/network during deploys. Adjust later if needed.
+    const result = await runPythonScript(script, [filePath], { timeoutMS: 120000 }); // allow up to 120s
 
     console.log('Predict python result:', { code: result.code, python: result.python, stdoutLen: result.stdout?.length, stderrLen: result.stderr?.length });
 
@@ -86,9 +88,13 @@ router.post('/', upload.any(), async (req, res) => {
       });
     }
   } catch (err) {
-    // surface timeout and python messages
-    console.error('Predict route error:', err);
-    return res.status(500).json({ success: false, message: err.message });
+    // surface timeout and python messages with better status codes and helpful content
+    console.error('Predict route error:', err && err.message ? err.message : err);
+    if (err && typeof err.message === 'string' && err.message.includes('timed out')) {
+      // include any captured stdout/stderr to help debugging (but keep small)
+      return res.status(504).json({ success: false, message: err.message, stdout: err.stdout ? String(err.stdout).slice(0, 2000) : undefined, stderr: err.stderr ? String(err.stderr).slice(0, 2000) : undefined });
+    }
+    return res.status(500).json({ success: false, message: err.message || 'Prediction failed' });
   }
 });
 
@@ -110,4 +116,32 @@ router.get('/script-check', (req, res) => {
   const found = candidates.find((c) => fs.existsSync(c));
   if (found) return res.json({ available: true, script: path.basename(found) });
   return res.json({ available: false, tried: candidates.map(p => path.basename(p)) });
+});
+
+// Light-weight warmup endpoint: triggers the Python script once to pre-load models
+router.post('/script-warmup', async (req, res) => {
+  try {
+    const candidates = [
+      path.resolve(__dirname, '..', 'ml', 'predict_real.py'),
+      path.resolve(__dirname, '..', 'ml', 'predict_ecg.py'),
+      path.resolve(process.cwd(), 'ml', 'predict_real.py'),
+      path.resolve(process.cwd(), 'ml', 'predict_ecg.py')
+    ];
+    const script = candidates.find((c) => fs.existsSync(c));
+    if (!script) return res.status(404).json({ warmed: false, message: 'No prediction script found' });
+
+    const start = Date.now();
+    try {
+      // pass an obviously invalid path so script imports models then fails quickly
+      await runPythonScript(script, ['__WARMUP__'], { timeoutMS: 120000 });
+    } catch (err) {
+      // We expect an error because the dummy path is invalid; but models should now be loaded
+      const ms = Date.now() - start;
+      return res.json({ warmed: true, tookMS: ms, stdout: err.stdout ? String(err.stdout).slice(0, 2000) : undefined, stderr: err.stderr ? String(err.stderr).slice(0, 2000) : undefined });
+    }
+    const ms = Date.now() - start;
+    return res.json({ warmed: true, tookMS: ms });
+  } catch (err) {
+    return res.status(500).json({ warmed: false, message: err.message });
+  }
 });

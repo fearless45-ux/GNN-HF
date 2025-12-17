@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -16,6 +17,7 @@ import saveRoute from "./routes/save.js";
 import reportRoute from "./routes/reports.js";
 import updatePasswordRoute from "./routes/updatePassword.js";
 import dashboardStatsRoute from "./routes/dashboardStats.js";
+import { runPythonScript } from "./utils/runPython.js";
 
 // Models
 import User from "./models/User.js";
@@ -161,6 +163,35 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () =>
   logger.info(`Server running on port ${PORT}`)
 );
+
+// Attempt a non-blocking model warmup after server start to avoid cold-start timeouts
+(async function warmupModels() {
+  try {
+    const candidates = [
+      path.join(__dirname, '..', 'ml', 'predict_real.py'),
+      path.join(__dirname, '..', 'ml', 'predict_ecg.py'),
+      path.join(process.cwd(), 'ml', 'predict_real.py'),
+      path.join(process.cwd(), 'ml', 'predict_ecg.py')
+    ];
+    const script = candidates.find((p) => fs.existsSync(p));
+    if (!script) {
+      logger.info('No prediction script found for warmup');
+      return;
+    }
+
+    logger.info('Warming up prediction script to pre-load models', { script: script });
+    const start = Date.now();
+    try {
+      await runPythonScript(script, ['__WARMUP__'], { timeoutMS: 120000 });
+    } catch (err) {
+      logger.info('Warmup completed (expected failure on invalid path) ', { tookMS: Date.now() - start, stdout: err.stdout ? err.stdout.substring(0, 500) : undefined });
+      return;
+    }
+    logger.info('Warmup finished quickly', { tookMS: Date.now() - start });
+  } catch (err) {
+    logger.error('Warmup error', { error: err.message });
+  }
+})();
 
 // =========================================
 // GRACEFUL SHUTDOWN

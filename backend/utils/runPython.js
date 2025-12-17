@@ -69,7 +69,11 @@ export function runPythonScript(scriptPath, args = [], options = {}) {
     child.on('close', (code, signal) => {
       if (timer) clearTimeout(timer);
       if (killedByTimeout) {
-        return reject(new Error(`Python script timed out after ${timeoutMS}ms`));
+        const e = new Error(`Python script timed out after ${timeoutMS}ms`);
+        // attach collected logs to the error for debugging (caller can choose to expose)
+        e.stdout = stdout.trim();
+        e.stderr = stderr.trim();
+        return reject(e);
       }
       return resolve({ code, stdout: stdout.trim(), stderr: stderr.trim(), python: py, signal });
     });
