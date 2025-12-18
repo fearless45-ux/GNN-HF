@@ -130,16 +130,25 @@ export default function UploadPage() {
       const data = await res.json();
       console.log("🟣 Prediction Response:", data);
 
-      if (data.status !== "success") {
+      // Accept two response formats:
+      // 1) { status: 'success', result: {...} }
+      // 2) direct Python-style result { stage: 'BINARY'|'MULTI', prediction: ..., confidence: ... }
+      let r: any = null;
+
+      if (data && data.status === "success" && data.result) {
+        r = data.result;
+      } else if (data && (data.stage || data.prediction || data.predictedClass || data.confidence !== undefined)) {
+        // Treat Python-like payload as success
+        r = data;
+      } else {
+        // Known backend error shape
         setError({
           title: "Prediction Failed",
-          message: data.message || "Model could not process this ECG."
+          message: (data && (data.message || data.error)) || "Model could not process this ECG."
         });
         setState("error");
         return;
       }
-
-      const r = data.result;
       let parsed: AnalysisResult | null = null;
 
       // ------------ BINARY NORMAL CASE ------------
