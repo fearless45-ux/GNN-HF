@@ -145,3 +145,9 @@ router.post('/script-warmup', async (req, res) => {
     return res.status(500).json({ warmed: false, message: err.message });
   }
 });
+
+// Explicitly handle preflight OPTIONS for predict route to avoid proxy 502s
+router.options('/', (req, res) => {
+  console.log('Received preflight OPTIONS for /api/predict from', req.ip);
+  res.sendStatus(200);
+});
